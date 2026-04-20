@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Peptide QSAR Prediction Tool</title>
+  <style>
+    :root {
+      --ink: #102a43;
+      --muted: #52606d;
+      --blue: #0b6ea8;
+      --cyan: #21a6c7;
+      --paper: #f5fbff;
+      --card: rgba(255, 255, 255, 0.88);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: Georgia, "Times New Roman", serif;
+      background:
+        radial-gradient(circle at 12% 18%, rgba(33,166,199,.22), transparent 26rem),
+        radial-gradient(circle at 88% 12%, rgba(11,110,168,.18), transparent 24rem),
+        linear-gradient(135deg, #eef9ff 0%, #f9fcff 48%, #e8f4ff 100%);
+    }
+    main {
+      width: min(1040px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 64px 0;
+    }
+    .hero {
+      display: grid;
+      grid-template-columns: 1.15fr .85fr;
+      gap: 28px;
+      align-items: center;
+    }
+    .panel {
+      background: var(--card);
+      border: 1px solid rgba(11,110,168,.15);
+      border-radius: 28px;
+      box-shadow: 0 24px 80px rgba(16,42,67,.12);
+      padding: 34px;
+      backdrop-filter: blur(10px);
+    }
+    .eyebrow {
+      color: var(--blue);
+      font: 700 13px/1.3 Verdana, sans-serif;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+    h1 {
+      font-size: clamp(42px, 7vw, 76px);
+      line-height: .95;
+      margin: 0 0 22px;
+      letter-spacing: -0.06em;
+    }
+    p {
+      color: var(--muted);
+      font: 18px/1.7 Verdana, sans-serif;
+      margin: 0 0 18px;
+    }
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 28px;
+    }
+    a.button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 48px;
+      padding: 0 20px;
+      border-radius: 999px;
+      text-decoration: none;
+      font: 700 14px/1 Verdana, sans-serif;
+      transition: transform .18s ease, box-shadow .18s ease;
+    }
+    a.primary {
+      color: white;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      box-shadow: 0 14px 28px rgba(11,110,168,.24);
+    }
+    a.secondary {
+      color: var(--blue);
+      border: 1px solid rgba(11,110,168,.25);
+      background: white;
+    }
+    a.button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 18px 34px rgba(11,110,168,.18);
+    }
+    .features {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 22px;
+    }
+    .feature {
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(234, 246, 253, .9);
+      color: #243b53;
+      font: 14px/1.5 Verdana, sans-serif;
+    }
+    .molecule {
+      min-height: 360px;
+      display: grid;
+      place-items: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .chain {
+      width: 100%;
+      max-width: 360px;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(255,255,255,.84), transparent 18%),
+        conic-gradient(from 20deg, rgba(11,110,168,.14), rgba(33,166,199,.32), rgba(11,110,168,.12), rgba(33,166,199,.28));
+      position: relative;
+    }
+    .chain span {
+      position: absolute;
+      width: 54px;
+      height: 54px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: white;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      font: 700 20px/1 Verdana, sans-serif;
+      box-shadow: 0 12px 32px rgba(11,110,168,.24);
+    }
+    .chain span:nth-child(1) { left: 42%; top: 4%; }
+    .chain span:nth-child(2) { right: 10%; top: 24%; }
+    .chain span:nth-child(3) { right: 18%; bottom: 16%; }
+    .chain span:nth-child(4) { left: 20%; bottom: 12%; }
+    .chain span:nth-child(5) { left: 6%; top: 30%; }
+    .note {
+      margin-top: 26px;
+      color: #627d98;
+      font: 13px/1.6 Verdana, sans-serif;
+    }
+    footer {
+      margin-top: 36px;
+      text-align: center;
+      color: #829ab1;
+      font: 13px/1.6 Verdana, sans-serif;
+    }
+    @media (max-width: 780px) {
+      main { padding: 28px 0; }
+      .hero { grid-template-columns: 1fr; }
+      .features { grid-template-columns: 1fr; }
+      .panel { padding: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <div class="panel">
+        <div class="eyebrow">Windows Peptide QSAR Platform</div>
+        <h1>Peptide QSAR Prediction Tool</h1>
+        <p>
+          A local Windows-friendly application for peptide descriptors, QSAR model training,
+          activity/property prediction, PCA, visualizations, and scientific reporting.
+        </p>
+        <div class="buttons">
+          <a class="button primary" href="https://github.com/ahmedGSoliman99/Peptide_QSAR_Tool/releases/download/v1.0.0/PeptideQSAR_Setup.exe">Download Windows Installer</a>
+          <a class="button secondary" href="https://github.com/ahmedGSoliman99/Peptide_QSAR_Tool/releases/latest">Open Latest Release</a>
+          <a class="button secondary" href="https://github.com/ahmedGSoliman99/Peptide_QSAR_Tool">View Source Code</a>
+        </div>
+        <div class="features">
+          <div class="feature">Sequence input, FASTA, CSV, Excel, TXT, and SDF support</div>
+          <div class="feature">AAC, DPC, charge, GRAVY, pI, Boman, aliphatic, and more</div>
+          <div class="feature">Regression, binary classification, and multiclass modeling</div>
+          <div class="feature">PCA, feature importance, SHAP support, and report export</div>
+        </div>
+        <div class="note">
+          No Python installation is required for the Windows installer. If Windows SmartScreen appears,
+          choose "More info" then "Run anyway" if you trust the downloaded file.
+        </div>
+      </div>
+      <div class="panel molecule" aria-hidden="true">
+        <div class="chain">
+          <span>A</span><span>K</span><span>L</span><span>V</span><span>F</span>
+        </div>
+      </div>
+    </section>
+    <footer>
+      Developed by Ahmed G. Soliman. Local QSAR app, runs in the browser at localhost after installation.
+    </footer>
+  </main>
+</body>
+</html>
