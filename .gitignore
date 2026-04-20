@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+.env
+
+# Build outputs
+build/
+dist/
+*.spec
+
+# Installer outputs and temporary packaging files
+installer/staging/
+installer/test_install/
+installer/*.exe
+installer/*.CAB
+installer/*.DDF
+installer/*.RPT
+installer/*_LAYOUT.INF
+installer/PeptideQSAR_Setup.sed
+
+# Runtime/user files
+saved_models/
+*.joblib
+*.pkl
+
+# Logs
+*.log
+
