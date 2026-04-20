@@ -18,6 +18,22 @@ Portable single-file version:
 
 On first launch, Windows may show SmartScreen because the executable is not code-signed. If you trust the file, choose **More info > Run anyway**.
 
+## Use as a Web App
+
+This repository is ready for Streamlit Community Cloud deployment:
+
+- Repository: `ahmedGSoliman99/Peptide_QSAR_Tool`
+- Branch: `main`
+- Main file: `app.py`
+- Python runtime: `runtime.txt`
+- Dependencies: `requirements.txt`
+
+Deployment guide:
+
+`DEPLOY_STREAMLIT.md`
+
+GitHub Pages is used only for the download landing page because GitHub Pages cannot run a Python Streamlit backend.
+
 ## Quick Start (No coding)
 
 Double-click:
