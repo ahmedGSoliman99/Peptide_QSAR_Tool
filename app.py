@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 from modules.descriptor_engine import (
@@ -18,6 +19,8 @@ from modules.descriptor_engine import (
     get_descriptor_columns,
 )
 from modules.design_suggestions import (
+    peptide_activity_design_profile,
+    sequence_alignment_to_reference,
     infer_optimization_direction,
     positional_activity_analysis,
     suggest_mutations_for_sequence,
@@ -163,6 +166,7 @@ def _init_session_state() -> None:
         "pca_analysis": None,
         "prediction_quality_df": None,
         "design_analysis": None,
+        "peptide_alignment_analysis": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -197,6 +201,7 @@ def _clear_downstream_after_new_input() -> None:
     st.session_state["pca_analysis"] = None
     st.session_state["prediction_quality_df"] = None
     st.session_state["design_analysis"] = None
+    st.session_state["peptide_alignment_analysis"] = None
 
 
 def _plot(fig, key: str) -> None:
@@ -1110,6 +1115,55 @@ def _render_visualization_tab() -> None:
     if direction_label == "auto":
         st.caption(f"Auto direction for `{design_target}`: `{inferred_direction}`.")
 
+    st.markdown("#### Best-Reference Sequence Alignment")
+    if st.button("Analyze Best Peptide Alignment", key="run_best_reference_alignment"):
+        try:
+            alignment_df = sequence_alignment_to_reference(
+                descriptor_df,
+                sequence_col="Sequence",
+                target_col=design_target,
+                direction=direction_label,
+            )
+            profile_df = peptide_activity_design_profile(
+                descriptor_df,
+                target_col=design_target,
+                descriptor_cols=descriptor_cols,
+                direction=direction_label,
+            )
+            st.session_state["peptide_alignment_analysis"] = {
+                "alignment": alignment_df,
+                "profile": profile_df,
+                "target": design_target,
+            }
+            st.success("Best-reference alignment and design profile are ready.")
+        except Exception as exc:
+            st.error(f"Best-reference alignment failed: {exc}")
+
+    peptide_alignment = st.session_state.get("peptide_alignment_analysis")
+    if isinstance(peptide_alignment, dict):
+        alignment_df = peptide_alignment.get("alignment", pd.DataFrame())
+        profile_df = peptide_alignment.get("profile", pd.DataFrame())
+        if not alignment_df.empty:
+            ref_name = alignment_df.iloc[0].get("ReferenceName", "Best reference")
+            ref_seq = alignment_df.iloc[0].get("ReferenceSequence", "")
+            st.caption(f"Reference peptide: {ref_name} | {ref_seq}")
+            st.dataframe(alignment_df.head(50), use_container_width=True, height=320)
+            if "Target" in alignment_df.columns:
+                _plot(
+                    px.scatter(
+                        alignment_df,
+                        x="EditSimilarityToReference",
+                        y="Target",
+                        hover_name="Name" if "Name" in alignment_df.columns else None,
+                        template="plotly_white",
+                        title="Sequence similarity to best peptide vs target",
+                    ),
+                    key="design_best_reference_similarity",
+                )
+        if not profile_df.empty:
+            st.markdown("#### Best-Activity Structure Criteria")
+            st.dataframe(profile_df, use_container_width=True, height=260)
+
     if st.button("Analyze Position Effects", key="run_position_design"):
         try:
             analysis = positional_activity_analysis(
@@ -1268,7 +1322,7 @@ def _render_about_tab() -> None:
 
 This local Windows-friendly application supports peptide sequence upload, peptide descriptor calculation,
 QSAR model training, activity/property prediction, model evaluation, explainability, PCA analysis,
-position-level design suggestions, and report export.
+best-reference sequence alignment, position-level design suggestions, and report export.
 
 ### Scientific and Software Basis
 
@@ -1283,6 +1337,8 @@ position-level design suggestions, and report export.
   Bayes, and MLP models.
 - **Visualization:** Plotly is used for interactive descriptor distributions, heatmaps, PCA scores, loading
   plots, model comparison, prediction ranking, confusion matrices, and design-suggestion heatmaps.
+- **Design guidance:** best-reference peptide alignment, edit similarity, position-wise residue effects,
+  candidate mutation suggestions, and best-activity descriptor windows are estimated from the uploaded dataset.
 - **Explainability:** model-native feature importance is used where available; SHAP support is optional when
   installed.
 - **Windows packaging:** Streamlit is launched locally through `run_app.bat`; PyInstaller can build a launcher
