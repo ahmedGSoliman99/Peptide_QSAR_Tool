@@ -315,6 +315,12 @@ def _decode_if_needed(values: np.ndarray, encoder: LabelEncoder | None) -> np.nd
         return values
 
 
+def _infer_regression_direction(target_column: str) -> str:
+    lower = (target_column or "").lower().replace("_", "").replace(" ", "")
+    lower_is_better = ("ic50", "ec50", "ki", "kd", "mic", "docking", "vina", "bindingscore", "bindingenergy", "deltag")
+    return "minimize" if any(token in lower for token in lower_is_better) else "maximize"
+
+
 def train_and_compare_models(
     descriptor_df: pd.DataFrame,
     target_column: str,
@@ -561,7 +567,10 @@ def predict_with_bundle(bundle: ModelBundle, sequences_df: pd.DataFrame) -> tupl
         else:
             result_df["RankingScore"] = y_prob.max(axis=1)
     else:
-        result_df["RankingScore"] = pd.to_numeric(result_df["Prediction"], errors="coerce")
+        pred_numeric = pd.to_numeric(result_df["Prediction"], errors="coerce")
+        direction = _infer_regression_direction(bundle.target_column)
+        result_df["OptimizationDirection"] = direction
+        result_df["RankingScore"] = -pred_numeric if direction == "minimize" else pred_numeric
 
     result_df = result_df.sort_values("RankingScore", ascending=False).reset_index(drop=True)
     result_df.insert(0, "Rank", np.arange(1, len(result_df) + 1))

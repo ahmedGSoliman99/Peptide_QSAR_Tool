@@ -526,9 +526,9 @@ def _render_train_tab() -> None:
     model_catalog = available_models_for_task(task_type, n_classes=max(2, n_classes))
     model_names = list(model_catalog.keys())
     if task_type == "regression":
-        preferred = ["SVR (RBF)", "kNN", "Random Forest", "Gradient Boosting", "Elastic Net"]
+        preferred = ["Gradient Boosting", "Extra Trees", "Random Forest", "Ridge", "SVR (RBF)"]
     else:
-        preferred = ["SVM (RBF)", "kNN", "Random Forest", "Gradient Boosting", "Logistic Regression"]
+        preferred = ["Extra Trees", "Random Forest", "SVM (RBF)", "Gradient Boosting", "Logistic Regression"]
     default_models = [m for m in preferred if m in model_names]
     if not default_models:
         default_models = model_names[: min(5, len(model_names))]
@@ -603,6 +603,19 @@ def _render_train_tab() -> None:
         metric_col = "R2" if result["task_type"] == "regression" else "F1"
         fig = plot_model_comparison(comparison_df, primary_metric=metric_col)
         _plot(fig, key="train_model_comparison")
+        if result["task_type"] == "regression" and "R2" in comparison_df.columns:
+            best_r2 = pd.to_numeric(comparison_df["R2"], errors="coerce").max()
+            if pd.notna(best_r2) and best_r2 < 0:
+                st.warning(
+                    "All compared models have negative R2 on the test split. This usually means the dataset is too small, "
+                    "too noisy, or the split is not representative. Try adding more peptides, disabling high-dimensional "
+                    "dipeptide features, using correlation filtering/PCA, or changing the random seed."
+                )
+            elif pd.to_numeric(comparison_df["R2"], errors="coerce").lt(0).any():
+                st.info(
+                    "Some models have negative R2, but the leaderboard picked a better model above them. "
+                    "Use the best model row for prediction instead of the weak negative-R2 models."
+                )
 
         st.markdown("#### Save Trained Model")
         model_name = st.selectbox("Choose trained model to save:", list(result["model_outputs"].keys()))
@@ -851,6 +864,13 @@ def _render_predict_tab() -> None:
     prediction_df = st.session_state["prediction_df"]
     prediction_quality_df = st.session_state.get("prediction_quality_df")
     if isinstance(prediction_df, pd.DataFrame) and not prediction_df.empty:
+        if "OptimizationDirection" in prediction_df.columns:
+            direction = str(prediction_df["OptimizationDirection"].dropna().iloc[0]) if prediction_df["OptimizationDirection"].notna().any() else ""
+            if direction == "minimize":
+                st.info(
+                    "This model target is interpreted as lower-is-better (for example IC50/MIC/DockingScore). "
+                    "Predicted values may be negative for docking scores; ranking uses `RankingScore = -Prediction` so better candidates appear first."
+                )
         st.dataframe(prediction_df, use_container_width=True, height=300)
         _plot(
             plot_prediction_ranking(prediction_df, top_n=min(30, len(prediction_df))),

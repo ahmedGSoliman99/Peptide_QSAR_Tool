@@ -107,7 +107,8 @@ class FeaturePreprocessor:
 
         aligned = X.reindex(columns=self.input_columns).copy()
         imputed = self.imputer.transform(aligned)
-        var_matrix = self.variance_selector.transform(imputed)
+        imputed_df = pd.DataFrame(imputed, columns=self.input_columns, index=aligned.index)
+        var_matrix = self.variance_selector.transform(imputed_df)
 
         var_df = pd.DataFrame(var_matrix, columns=self._variance_columns, index=aligned.index)
         corr_df = var_df[self._corr_kept_columns]
