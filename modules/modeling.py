@@ -20,7 +20,7 @@ from sklearn.ensemble import (
     RandomForestRegressor,
 )
 from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge
-from sklearn.model_selection import KFold, StratifiedKFold, cross_validate
+from sklearn.model_selection import KFold, RepeatedKFold, StratifiedKFold, cross_validate
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.neural_network import MLPClassifier, MLPRegressor
@@ -247,10 +247,10 @@ def _pick_cv(task_type: str, y: pd.Series, requested_folds: int) -> Any | None:
             return None
         return StratifiedKFold(n_splits=folds, shuffle=True, random_state=42)
 
-    folds = min(folds, len(y))
+    folds = min(folds, max(2, len(y) // 2))
     if folds < 2:
         return None
-    return KFold(n_splits=folds, shuffle=True, random_state=42)
+    return RepeatedKFold(n_splits=folds, n_repeats=5, random_state=42)
 
 
 def _run_cv(
@@ -319,6 +319,40 @@ def _infer_regression_direction(target_column: str) -> str:
     lower = (target_column or "").lower().replace("_", "").replace(" ", "")
     lower_is_better = ("ic50", "ec50", "ki", "kd", "mic", "docking", "vina", "bindingscore", "bindingenergy", "deltag")
     return "minimize" if any(token in lower for token in lower_is_better) else "maximize"
+
+
+def _positive_lower_better_score(values: Any) -> pd.Series:
+    """Convert lower-is-better outputs into positive, monotonic design scores."""
+    raw = pd.Series(pd.to_numeric(values, errors="coerce"), dtype=float)
+    score = pd.Series(np.nan, index=raw.index, dtype=float)
+    valid = raw.dropna()
+    if valid.empty:
+        return score
+
+    vmin = float(valid.min())
+    vmax = float(valid.max())
+    if len(valid) > 1 and not np.isclose(vmin, vmax):
+        score.loc[valid.index] = 100.0 * (vmax - valid) / (vmax - vmin)
+    else:
+        score.loc[valid.index] = np.where(valid <= 0, -valid, 100.0 / (1.0 + valid))
+    return score.clip(lower=0.0)
+
+
+def _normalized_score(values: Any, higher_is_better: bool = True) -> pd.Series:
+    raw = pd.Series(pd.to_numeric(values, errors="coerce"), dtype=float)
+    out = pd.Series(np.nan, index=raw.index, dtype=float)
+    valid = raw.dropna()
+    if valid.empty:
+        return out
+    vmin = float(valid.min())
+    vmax = float(valid.max())
+    if np.isclose(vmin, vmax):
+        out.loc[valid.index] = 100.0
+    elif higher_is_better:
+        out.loc[valid.index] = 100.0 * (valid - vmin) / (vmax - vmin)
+    else:
+        out.loc[valid.index] = 100.0 * (vmax - valid) / (vmax - vmin)
+    return out.clip(lower=0.0, upper=100.0)
 
 
 def train_and_compare_models(
@@ -415,7 +449,6 @@ def train_and_compare_models(
                 "F1": metrics["F1"],
                 "ROC_AUC": metrics["ROC_AUC"],
             }
-            primary_score = metrics["F1"]
         else:
             metrics = evaluate_regression(split["y_test"].to_numpy(), y_pred_test)
             record = {
@@ -425,11 +458,16 @@ def train_and_compare_models(
                 "RMSE": metrics["RMSE"],
                 "MAE": metrics["MAE"],
             }
-            primary_score = metrics["R2"]
 
         cv_summary = _run_cv(estimator, X_train, split["y_train"], task, cv_folds=cv_folds)
         record.update(cv_summary)
+        if _is_classification(task):
+            primary_score = float(record.get("CV_f1_weighted_mean", metrics["F1"]))
+        else:
+            primary_score = float(record.get("CV_r2_mean", metrics["R2"]))
         record["PrimaryScore"] = primary_score
+        record["SelectionScore"] = primary_score
+        record["FitQuality_0_100"] = max(0.0, min(100.0, 100.0 * primary_score)) if np.isfinite(primary_score) else 0.0
         model_records.append(record)
 
         y_pred_test_decoded = _decode_if_needed(y_pred_test, label_encoder)
@@ -444,15 +482,21 @@ def train_and_compare_models(
             if _is_classification(task):
                 y_prob_val = _safe_predict_proba(estimator, X_val)
 
+        final_preprocessor = FeaturePreprocessor(preprocessing_config)
+        final_preprocessor.fit(X)
+        X_full = final_preprocessor.transform_dataframe(X)
+        final_estimator = clone(catalog[model_name])
+        final_estimator.fit(X_full, y)
+
         bundle = ModelBundle(
             task_type=task,
             model_name=model_name,
-            estimator=estimator,
-            preprocessor=preprocessor,
+            estimator=final_estimator,
+            preprocessor=final_preprocessor,
             descriptor_config=descriptor_config,
             descriptor_columns=descriptor_columns,
             target_column=target_column,
-            feature_names_transformed=preprocessor.output_feature_names.copy(),
+            feature_names_transformed=final_preprocessor.output_feature_names.copy(),
             label_encoder=label_encoder,
             metrics=metrics,
             cv_summary=cv_summary,
@@ -570,7 +614,17 @@ def predict_with_bundle(bundle: ModelBundle, sequences_df: pd.DataFrame) -> tupl
         pred_numeric = pd.to_numeric(result_df["Prediction"], errors="coerce")
         direction = _infer_regression_direction(bundle.target_column)
         result_df["OptimizationDirection"] = direction
-        result_df["RankingScore"] = -pred_numeric if direction == "minimize" else pred_numeric
+        if direction == "minimize":
+            optimized = _positive_lower_better_score(pred_numeric)
+            result_df["RawModelPrediction"] = pred_numeric
+            result_df["Prediction"] = optimized
+            result_df["PredictionMeaning"] = "Positive optimized score; higher is better. Raw lower-is-better value is in RawModelPrediction."
+            result_df["RankingScore"] = optimized
+            result_df["NormalizedScore_0_100"] = _normalized_score(pred_numeric, higher_is_better=False)
+        else:
+            result_df["PredictionMeaning"] = "Predicted target value; higher is better."
+            result_df["RankingScore"] = pred_numeric
+            result_df["NormalizedScore_0_100"] = _normalized_score(pred_numeric, higher_is_better=True)
 
     result_df = result_df.sort_values("RankingScore", ascending=False).reset_index(drop=True)
     result_df.insert(0, "Rank", np.arange(1, len(result_df) + 1))

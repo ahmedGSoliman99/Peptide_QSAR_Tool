@@ -16,6 +16,7 @@ from modules.descriptor_engine import (
     DescriptorConfig,
     calculate_descriptors_dataframe,
     describe_descriptor_set,
+    generate_peptide_3d_mol,
     get_descriptor_columns,
 )
 from modules.design_suggestions import (
@@ -71,6 +72,18 @@ DATA_DIR = ROOT_DIR / "data"
 MODEL_DIR = ROOT_DIR / "saved_models"
 DOCS_DIR = ROOT_DIR / "docs"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
+DEVELOPER_NAME = "Ahmed G. Soliman"
+DEVELOPER_PORTFOLIO = "https://sites.google.com/view/ahmed-g-soliman/home"
+DEVELOPER_PROFILE = {
+    "Developer": DEVELOPER_NAME,
+    "Current role": "MEXT master's student at Kyutech, Japan, School of Life Science and Engineering",
+    "Background": "Biotechnology Program, Faculty of Agriculture, Ain Shams University, Cairo, Egypt",
+    "Experience": "Previous instructor at ACGEB in in-silico drug design and immune-informatics",
+    "Scopus ID": "58569160700",
+    "ResearcherID (WOS)": "ABE-8406-2021",
+    "ORCID": "0000-0002-1122-3993",
+    "Portfolio": DEVELOPER_PORTFOLIO,
+}
 
 
 st.set_page_config(
@@ -208,6 +221,56 @@ def _plot(fig, key: str) -> None:
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 
+def _plot_peptide_3d(sequence: str):
+    mol3d, status = generate_peptide_3d_mol(sequence)
+    if mol3d is None:
+        return px.scatter_3d(title=f"3D peptide view unavailable: {status}", template="plotly_white"), status
+    conf = mol3d.GetConformer()
+    atoms = []
+    for atom in mol3d.GetAtoms():
+        pos = conf.GetAtomPosition(atom.GetIdx())
+        atoms.append(
+            {
+                "Atom": atom.GetSymbol(),
+                "Index": atom.GetIdx(),
+                "x": pos.x,
+                "y": pos.y,
+                "z": pos.z,
+                "AtomicNum": atom.GetAtomicNum(),
+            }
+        )
+    atom_df = pd.DataFrame(atoms)
+    fig = px.scatter_3d(
+        atom_df,
+        x="x",
+        y="y",
+        z="z",
+        color="Atom",
+        hover_name="Atom",
+        hover_data={"Index": True, "x": ":.2f", "y": ":.2f", "z": ":.2f"},
+        template="plotly_white",
+        title="Approximate peptide 3D conformer (ETKDG/MMFF or UFF)",
+    )
+    fig.update_traces(marker=dict(size=4, line=dict(width=0.5, color="#102a43")))
+    for bond in mol3d.GetBonds():
+        begin = conf.GetAtomPosition(bond.GetBeginAtomIdx())
+        end = conf.GetAtomPosition(bond.GetEndAtomIdx())
+        fig.add_trace(
+            {
+                "type": "scatter3d",
+                "x": [begin.x, end.x],
+                "y": [begin.y, end.y],
+                "z": [begin.z, end.z],
+                "mode": "lines",
+                "line": {"color": "#7f8c8d", "width": 3},
+                "hoverinfo": "skip",
+                "showlegend": False,
+            }
+        )
+    fig.update_layout(scene=dict(aspectmode="data"), margin=dict(l=0, r=0, t=45, b=0))
+    return fig, status
+
+
 def _render_header() -> None:
     st.markdown(
         """
@@ -215,6 +278,7 @@ def _render_header() -> None:
           <h1>Peptide QSAR Prediction Tool</h1>
           <p>Beginner-friendly platform for peptide descriptor engineering, QSAR model training,
           explainable prediction, and scientific report export.</p>
+          <p><b>Developed by Ahmed G. Soliman.</b></p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -410,16 +474,22 @@ def _render_descriptors_tab() -> None:
         st.info("Validate input data first in the Upload tab.")
         return
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     # User-customizable descriptor toggles:
     # add new switches here if you later introduce more descriptor families.
     include_dipeptide = c1.checkbox("Include dipeptide composition (400 features)", value=False)
     include_fingerprints = c2.checkbox("Include motif fingerprints", value=True)
     include_elemental = c3.checkbox("Include elemental composition", value=True)
+    include_3d = c4.checkbox(
+        "Include approximate 3D descriptors",
+        value=False,
+        help="Uses RDKit MolFromFASTA + ETKDG to generate a 3D peptide conformer and shape descriptors. Slower; skipped for peptides longer than 45 residues.",
+    )
     config = DescriptorConfig(
         include_dipeptide=include_dipeptide,
         include_fingerprints=include_fingerprints,
         include_elemental=include_elemental,
+        include_3d=include_3d,
     )
     st.caption(f"Descriptor set: {describe_descriptor_set(config)}")
 
@@ -600,9 +670,18 @@ def _render_train_tab() -> None:
         comparison_df = result["comparison_table"]
         st.dataframe(comparison_df, use_container_width=True)
 
-        metric_col = "R2" if result["task_type"] == "regression" else "F1"
+        metric_col = (
+            "FitQuality_0_100"
+            if result["task_type"] == "regression" and "FitQuality_0_100" in comparison_df.columns
+            else ("R2" if result["task_type"] == "regression" else "F1")
+        )
         fig = plot_model_comparison(comparison_df, primary_metric=metric_col)
         _plot(fig, key="train_model_comparison")
+        if result["task_type"] == "regression" and metric_col == "FitQuality_0_100":
+            st.caption(
+                "The leaderboard uses repeated cross-validation when possible. "
+                "FitQuality_0_100 is non-negative for quick comparison; R2/RMSE/MAE remain available for scientific reporting."
+            )
         if result["task_type"] == "regression" and "R2" in comparison_df.columns:
             best_r2 = pd.to_numeric(comparison_df["R2"], errors="coerce").max()
             if pd.notna(best_r2) and best_r2 < 0:
@@ -869,7 +948,7 @@ def _render_predict_tab() -> None:
             if direction == "minimize":
                 st.info(
                     "This model target is interpreted as lower-is-better (for example IC50/MIC/DockingScore). "
-                    "Predicted values may be negative for docking scores; ranking uses `RankingScore = -Prediction` so better candidates appear first."
+                    "`Prediction` is shown as a positive optimized design score, while the original model output is kept in `RawModelPrediction`."
                 )
         st.dataframe(prediction_df, use_container_width=True, height=300)
         _plot(
@@ -962,6 +1041,18 @@ def _render_visualization_tab() -> None:
     if not isinstance(descriptor_df, pd.DataFrame) or descriptor_df.empty:
         st.info("Calculate descriptors first.")
         return
+
+    st.markdown("#### 3D Peptide Viewer")
+    sequence_options = descriptor_df["Sequence"].astype(str).head(300).tolist() if "Sequence" in descriptor_df.columns else []
+    if sequence_options:
+        selected_sequence = st.selectbox("Select peptide sequence for approximate 3D conformer", sequence_options, key="peptide_3d_sequence")
+        if st.button("Generate 3D Peptide View", key="generate_peptide_3d_view"):
+            with st.spinner("Generating approximate peptide 3D conformer..."):
+                fig3d, status3d = _plot_peptide_3d(selected_sequence)
+            st.caption(status3d)
+            _plot(fig3d, key="peptide_3d_viewer")
+    else:
+        st.info("No peptide sequence column is available for 3D viewing.")
 
     st.markdown("#### Descriptor Landscape")
     c1, c2 = st.columns(2)
@@ -1056,7 +1147,11 @@ def _render_visualization_tab() -> None:
 
     if isinstance(result, dict):
         st.markdown("#### Model Comparison")
-        metric_col = "R2" if result["task_type"] == "regression" else "F1"
+        metric_col = (
+            "FitQuality_0_100"
+            if result["task_type"] == "regression" and "FitQuality_0_100" in result["comparison_table"].columns
+            else ("R2" if result["task_type"] == "regression" else "F1")
+        )
         _plot(
             plot_model_comparison(result["comparison_table"], primary_metric=metric_col),
             key="viz_model_comparison",
@@ -1270,7 +1365,11 @@ def _render_export_tab() -> None:
         }
         metrics_summary = result["model_outputs"][best]["test"]["metrics"]
         comparison_df = result["comparison_table"]
-        metric_col = "R2" if result["task_type"] == "regression" else "F1"
+        metric_col = (
+            "FitQuality_0_100"
+            if result["task_type"] == "regression" and "FitQuality_0_100" in comparison_df.columns
+            else ("R2" if result["task_type"] == "regression" else "F1")
+        )
         figures["Model Comparison"] = plot_model_comparison(comparison_df, primary_metric=metric_col)
 
     if isinstance(descriptor_df, pd.DataFrame) and not descriptor_df.empty:
@@ -1335,6 +1434,9 @@ def _render_export_tab() -> None:
 
 def _render_about_tab() -> None:
     st.subheader("About / Documentation")
+    st.markdown("### Developed by Ahmed G. Soliman")
+    st.dataframe(pd.DataFrame(DEVELOPER_PROFILE.items(), columns=["Item", "Details"]), use_container_width=True, hide_index=True)
+    st.link_button("Open developer portfolio", DEVELOPER_PORTFOLIO, use_container_width=True)
 
     st.markdown(
         """
@@ -1351,7 +1453,7 @@ best-reference sequence alignment, position-level design suggestions, and report
   fractions, and extinction coefficients.
 - **Custom peptide descriptors:** amino acid composition, dipeptide composition, residue class frequencies,
   elemental composition, hydrophobic moment, charge density, Chou-Fasman helix/sheet propensities, Boman-style
-  binding/solubility scale, and motif fingerprints.
+  binding/solubility scale, motif fingerprints, and optional approximate 3D conformer shape descriptors.
 - **Machine learning:** scikit-learn estimators are used for regression, binary classification, and multiclass
   classification, including linear models, SVR/SVM, kNN, Random Forest, Extra Trees, Gradient Boosting, Naive
   Bayes, and MLP models.
@@ -1359,6 +1461,9 @@ best-reference sequence alignment, position-level design suggestions, and report
   plots, model comparison, prediction ranking, confusion matrices, and design-suggestion heatmaps.
 - **Design guidance:** best-reference peptide alignment, edit similarity, position-wise residue effects,
   candidate mutation suggestions, and best-activity descriptor windows are estimated from the uploaded dataset.
+- **3D handling:** RDKit can build approximate peptide conformers from one-letter sequences with `MolFromFASTA`
+  and ETKDG embedding for visual inspection and 3D shape descriptors. This is a computational approximation,
+  not an experimentally determined structure.
 - **Explainability:** model-native feature importance is used where available; SHAP support is optional when
   installed.
 - **Windows packaging:** Streamlit is launched locally through `run_app.bat`; PyInstaller can build a launcher
@@ -1381,15 +1486,10 @@ best-reference sequence alignment, position-level design suggestions, and report
 - PyInstaller documentation:
   https://pyinstaller.org/en/stable/
 
-### Developer
+### Developer Statement
 
-**Ahmed G. Soliman**
-
-Ahmed G. Soliman is listed on his portfolio as a MEXT master's student at Kyutech, School of Life Science and
-Engineering, with a biotechnology background from Ain Shams University, and as CEO of iMole Bioinformatics Lab.
-
-Developer portfolio:
-https://sites.google.com/view/ahmed-g-soliman/home
+This application was developed by Ahmed G. Soliman for peptide QSAR modeling, peptide descriptor engineering,
+activity prediction, design guidance, 3D peptide visualization, and scientific reporting.
         """
     )
 

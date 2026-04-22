@@ -11,6 +11,14 @@ import numpy as np
 import pandas as pd
 from Bio.SeqUtils.ProtParam import ProteinAnalysis
 
+try:  # pragma: no cover - optional at import time, required for 3D descriptors
+    from rdkit import Chem
+    from rdkit.Chem import AllChem, rdMolDescriptors
+except Exception:  # pragma: no cover
+    Chem = None
+    AllChem = None
+    rdMolDescriptors = None
+
 from .constants import (
     AA_CLASSES,
     BOMAN_SCALE,
@@ -29,6 +37,7 @@ class DescriptorConfig:
     include_dipeptide: bool = False
     include_fingerprints: bool = True
     include_elemental: bool = True
+    include_3d: bool = False
 
 
 def _safe_protein_analysis(sequence: str) -> ProteinAnalysis:
@@ -145,6 +154,94 @@ def _motif_fingerprints(sequence: str) -> dict[str, float]:
     return {f"Motif_{motif}": sequence.count(motif) / denom for motif in MOTIF_FINGERPRINTS}
 
 
+def _zero_3d_descriptors(success: float = 0.0) -> dict[str, float]:
+    return {
+        "3D_EmbedSuccess": float(success),
+        "3D_Asphericity": 0.0,
+        "3D_Eccentricity": 0.0,
+        "3D_InertialShapeFactor": 0.0,
+        "3D_NPR1": 0.0,
+        "3D_NPR2": 0.0,
+        "3D_PMI1": 0.0,
+        "3D_PMI2": 0.0,
+        "3D_PMI3": 0.0,
+        "3D_RadiusOfGyration": 0.0,
+        "3D_SpherocityIndex": 0.0,
+    }
+
+
+def _safe_float(value: object) -> float | None:
+    try:
+        numeric = float(value)
+    except Exception:
+        return None
+    if math.isfinite(numeric):
+        return numeric
+    return None
+
+
+def generate_peptide_3d_mol(sequence: str):
+    """Generate an approximate 3D peptide conformer from a one-letter sequence."""
+    if Chem is None or AllChem is None:
+        return None, "RDKit is not installed"
+    sequence = clean_sequence(sequence)
+    if not sequence:
+        return None, "Empty sequence"
+    if len(sequence) > 45:
+        return None, "3D embedding skipped for peptides longer than 45 residues"
+    mol = Chem.MolFromFASTA(sequence)
+    if mol is None:
+        return None, "RDKit could not build peptide from sequence"
+    mol = Chem.AddHs(mol)
+    params = AllChem.ETKDGv3()
+    params.randomSeed = 42
+    params.useSmallRingTorsions = True
+    status = AllChem.EmbedMolecule(mol, params)
+    if status != 0:
+        status = AllChem.EmbedMolecule(mol, randomSeed=42, useRandomCoords=True)
+    if status != 0:
+        return None, "3D embedding failed"
+    try:
+        if AllChem.MMFFHasAllMoleculeParams(mol):
+            AllChem.MMFFOptimizeMolecule(mol, maxIters=250)
+        else:
+            AllChem.UFFOptimizeMolecule(mol, maxIters=250)
+    except Exception:
+        pass
+    return mol, "ETKDG 3D conformer generated"
+
+
+def _peptide_3d_descriptors(sequence: str) -> dict[str, float]:
+    out = _zero_3d_descriptors(success=0.0)
+    if rdMolDescriptors is None:
+        return out
+    mol3d, _ = generate_peptide_3d_mol(sequence)
+    if mol3d is None:
+        return out
+    out["3D_EmbedSuccess"] = 1.0
+    descriptor_funcs = {
+        "3D_Asphericity": getattr(rdMolDescriptors, "CalcAsphericity", None),
+        "3D_Eccentricity": getattr(rdMolDescriptors, "CalcEccentricity", None),
+        "3D_InertialShapeFactor": getattr(rdMolDescriptors, "CalcInertialShapeFactor", None),
+        "3D_NPR1": getattr(rdMolDescriptors, "CalcNPR1", None),
+        "3D_NPR2": getattr(rdMolDescriptors, "CalcNPR2", None),
+        "3D_PMI1": getattr(rdMolDescriptors, "CalcPMI1", None),
+        "3D_PMI2": getattr(rdMolDescriptors, "CalcPMI2", None),
+        "3D_PMI3": getattr(rdMolDescriptors, "CalcPMI3", None),
+        "3D_RadiusOfGyration": getattr(rdMolDescriptors, "CalcRadiusOfGyration", None),
+        "3D_SpherocityIndex": getattr(rdMolDescriptors, "CalcSpherocityIndex", None),
+    }
+    for name, func in descriptor_funcs.items():
+        if func is None:
+            continue
+        try:
+            value = _safe_float(func(mol3d))
+        except Exception:
+            value = None
+        out[name] = value if value is not None else 0.0
+    return out
+
+
 def calculate_sequence_descriptors(sequence: str, config: DescriptorConfig) -> dict[str, float]:
     sequence = clean_sequence(sequence)
     if not sequence:
@@ -184,6 +281,8 @@ def calculate_sequence_descriptors(sequence: str, config: DescriptorConfig) -> d
 
     if config.include_elemental:
         base.update(_elemental_composition(sequence))
+    if config.include_3d:
+        base.update(_peptide_3d_descriptors(sequence))
     if config.include_fingerprints:
         base.update(_motif_fingerprints(sequence))
     if config.include_dipeptide:
@@ -244,7 +343,7 @@ def get_descriptor_columns(df: pd.DataFrame) -> list[str]:
         "ExtCoeffOxidized",
     }
     descriptor_base.update(AA_CLASSES.keys())
-    descriptor_prefixes = ("AAC_", "DPC_", "Motif_", "Elem_")
+    descriptor_prefixes = ("AAC_", "DPC_", "Motif_", "Elem_", "3D_")
 
     out: list[str] = []
     for col in df.columns:
@@ -261,5 +360,6 @@ def describe_descriptor_set(config: DescriptorConfig) -> str:
         "dipeptide composition" if config.include_dipeptide else "no dipeptide composition",
         "motif fingerprints" if config.include_fingerprints else "no motif fingerprints",
         "elemental composition" if config.include_elemental else "no elemental composition",
+        "approximate 3D conformer descriptors" if config.include_3d else "no 3D conformer descriptors",
     ]
     return ", ".join(parts)

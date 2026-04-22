@@ -1,199 +1,121 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Peptide QSAR Prediction Tool</title>
+  <meta name="description" content="A peptide-focused QSAR and peptide design platform developed by Ahmed G. Soliman for descriptor-driven activity prediction, 3D peptide inspection, and model interpretation." />
   <style>
     :root {
-      --ink: #102a43;
-      --muted: #52606d;
-      --blue: #0b6ea8;
-      --cyan: #21a6c7;
-      --paper: #f5fbff;
-      --card: rgba(255, 255, 255, 0.88);
+      --ink: #102027;
+      --muted: #5d6f75;
+      --aqua: #00a6a6;
+      --blue: #0b5cad;
+      --sand: #f5efe2;
+      --paper: rgba(255, 255, 255, 0.84);
+      --line: rgba(16, 32, 39, 0.13);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      min-height: 100vh;
+      font-family: "Segoe UI", "Trebuchet MS", sans-serif;
       color: var(--ink);
-      font-family: Georgia, "Times New Roman", serif;
       background:
-        radial-gradient(circle at 12% 18%, rgba(33,166,199,.22), transparent 26rem),
-        radial-gradient(circle at 88% 12%, rgba(11,110,168,.18), transparent 24rem),
-        linear-gradient(135deg, #eef9ff 0%, #f9fcff 48%, #e8f4ff 100%);
+        radial-gradient(circle at 12% 18%, rgba(0, 166, 166, 0.22), transparent 32rem),
+        radial-gradient(circle at 88% 8%, rgba(11, 92, 173, 0.18), transparent 30rem),
+        linear-gradient(135deg, #fbf8ef 0%, #eef9f7 55%, #edf3fb 100%);
+      min-height: 100vh;
     }
-    main {
-      width: min(1040px, calc(100% - 32px));
-      margin: 0 auto;
-      padding: 64px 0;
-    }
-    .hero {
-      display: grid;
-      grid-template-columns: 1.15fr .85fr;
-      gap: 28px;
-      align-items: center;
-    }
-    .panel {
-      background: var(--card);
-      border: 1px solid rgba(11,110,168,.15);
+    header, main, footer { width: min(1120px, calc(100% - 32px)); margin: 0 auto; }
+    header { padding: 28px 0 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--blue); }
+    .hero { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 28px; align-items: center; padding: 56px 0 44px; }
+    .hero-card, .panel, .feature {
+      background: var(--paper);
+      border: 1px solid var(--line);
       border-radius: 28px;
-      box-shadow: 0 24px 80px rgba(16,42,67,.12);
-      padding: 34px;
-      backdrop-filter: blur(10px);
+      box-shadow: 0 24px 70px rgba(16, 32, 39, 0.10);
+      backdrop-filter: blur(16px);
     }
-    .eyebrow {
-      color: var(--blue);
-      font: 700 13px/1.3 Verdana, sans-serif;
-      letter-spacing: .14em;
-      text-transform: uppercase;
-      margin-bottom: 18px;
-    }
-    h1 {
-      font-size: clamp(42px, 7vw, 76px);
-      line-height: .95;
-      margin: 0 0 22px;
-      letter-spacing: -0.06em;
-    }
-    p {
-      color: var(--muted);
-      font: 18px/1.7 Verdana, sans-serif;
-      margin: 0 0 18px;
-    }
-    .buttons {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-top: 28px;
-    }
-    a.button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 48px;
-      padding: 0 20px;
-      border-radius: 999px;
-      text-decoration: none;
-      font: 700 14px/1 Verdana, sans-serif;
-      transition: transform .18s ease, box-shadow .18s ease;
-    }
-    a.primary {
-      color: white;
-      background: linear-gradient(135deg, var(--blue), var(--cyan));
-      box-shadow: 0 14px 28px rgba(11,110,168,.24);
-    }
-    a.secondary {
-      color: var(--blue);
-      border: 1px solid rgba(11,110,168,.25);
-      background: white;
-    }
-    a.button:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 18px 34px rgba(11,110,168,.18);
-    }
-    .features {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-      margin-top: 22px;
-    }
-    .feature {
-      padding: 14px;
-      border-radius: 18px;
-      background: rgba(234, 246, 253, .9);
-      color: #243b53;
-      font: 14px/1.5 Verdana, sans-serif;
-    }
+    .hero-card { padding: 42px; }
+    .eyebrow { color: var(--aqua); font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; font-size: 0.78rem; }
+    h1 { font-size: clamp(2.7rem, 6vw, 5.7rem); line-height: 0.94; margin: 12px 0 20px; letter-spacing: -0.075em; }
+    .lead { font-size: clamp(1.02rem, 2vw, 1.28rem); color: var(--muted); line-height: 1.75; max-width: 760px; }
     .molecule {
       min-height: 360px;
-      display: grid;
-      place-items: center;
+      padding: 30px;
       position: relative;
       overflow: hidden;
-    }
-    .chain {
-      width: 100%;
-      max-width: 360px;
-      aspect-ratio: 1;
-      border-radius: 50%;
-      background:
-        radial-gradient(circle at 50% 50%, rgba(255,255,255,.84), transparent 18%),
-        conic-gradient(from 20deg, rgba(11,110,168,.14), rgba(33,166,199,.32), rgba(11,110,168,.12), rgba(33,166,199,.28));
-      position: relative;
-    }
-    .chain span {
-      position: absolute;
-      width: 54px;
-      height: 54px;
       display: grid;
       place-items: center;
+    }
+    .helix {
+      width: 260px;
+      height: 260px;
       border-radius: 50%;
-      color: white;
-      background: linear-gradient(135deg, var(--blue), var(--cyan));
-      font: 700 20px/1 Verdana, sans-serif;
-      box-shadow: 0 12px 32px rgba(11,110,168,.24);
+      border: 2px solid rgba(0,166,166,0.18);
+      background:
+        repeating-radial-gradient(circle, rgba(0,166,166,0.14) 0 7px, transparent 8px 22px),
+        linear-gradient(150deg, rgba(11,92,173,0.12), rgba(0,166,166,0.16));
+      animation: pulse 6s ease-in-out infinite;
     }
-    .chain span:nth-child(1) { left: 42%; top: 4%; }
-    .chain span:nth-child(2) { right: 10%; top: 24%; }
-    .chain span:nth-child(3) { right: 18%; bottom: 16%; }
-    .chain span:nth-child(4) { left: 20%; bottom: 12%; }
-    .chain span:nth-child(5) { left: 6%; top: 30%; }
-    .note {
-      margin-top: 26px;
-      color: #627d98;
-      font: 13px/1.6 Verdana, sans-serif;
-    }
-    footer {
-      margin-top: 36px;
-      text-align: center;
-      color: #829ab1;
-      font: 13px/1.6 Verdana, sans-serif;
-    }
-    @media (max-width: 780px) {
-      main { padding: 28px 0; }
-      .hero { grid-template-columns: 1fr; }
-      .features { grid-template-columns: 1fr; }
-      .panel { padding: 24px; }
-    }
+    .node { position: absolute; width: 16px; height: 16px; border-radius: 50%; background: var(--aqua); box-shadow: 0 0 0 10px rgba(0,166,166,0.12); }
+    .node:nth-child(2) { top: 72px; left: 72px; }
+    .node:nth-child(3) { top: 132px; right: 64px; background: var(--blue); }
+    .node:nth-child(4) { bottom: 86px; left: 126px; background: #f1a208; }
+    @keyframes pulse { 0%,100% { transform: rotate(-6deg) scale(1); } 50% { transform: rotate(6deg) scale(1.045); } }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin: 18px 0 34px; }
+    .feature { padding: 24px; }
+    .feature h3, .panel h2 { margin: 0 0 10px; letter-spacing: -0.03em; }
+    .feature p, .panel p, li { color: var(--muted); line-height: 1.65; }
+    .panel { padding: 30px; margin: 18px 0; }
+    .chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    .chip { border: 1px solid var(--line); border-radius: 999px; padding: 9px 13px; color: var(--blue); background: rgba(255,255,255,0.7); font-weight: 650; }
+    a.button { display: inline-flex; align-items: center; justify-content: center; margin-top: 12px; padding: 12px 18px; border-radius: 999px; color: white; background: linear-gradient(135deg, var(--blue), var(--aqua)); text-decoration: none; font-weight: 800; }
+    footer { padding: 34px 0 52px; color: var(--muted); }
+    @media (max-width: 850px) { .hero, .grid { grid-template-columns: 1fr; } .hero-card { padding: 28px; } }
   </style>
 </head>
 <body>
+  <header>Peptide QSAR Prediction Tool</header>
   <main>
     <section class="hero">
-      <div class="panel">
-        <div class="eyebrow">Windows Peptide QSAR Platform</div>
-        <h1>Peptide QSAR Prediction Tool</h1>
-        <p>
-          A local Windows-friendly application for peptide descriptors, QSAR model training,
-          activity/property prediction, PCA, visualizations, and scientific reporting.
-        </p>
-        <div class="buttons">
-          <a class="button primary" href="https://github.com/ahmedGSoliman99/Peptide_QSAR_Tool/releases/download/v1.0.0/PeptideQSAR_Setup.exe">Download Windows Installer</a>
-          <a class="button secondary" href="https://github.com/ahmedGSoliman99/Peptide_QSAR_Tool/releases/latest">Open Latest Release</a>
-          <a class="button secondary" href="https://github.com/ahmedGSoliman99/Peptide_QSAR_Tool">View Source Code</a>
-          <a class="button secondary" href="https://share.streamlit.io/">Deploy Live Web App</a>
-        </div>
-        <div class="features">
-          <div class="feature">Sequence input, FASTA, CSV, Excel, TXT, and SDF support</div>
-          <div class="feature">AAC, DPC, charge, GRAVY, pI, Boman, aliphatic, and more</div>
-          <div class="feature">Regression, binary classification, and multiclass modeling</div>
-          <div class="feature">PCA, feature importance, SHAP support, and report export</div>
-        </div>
-        <div class="note">
-          No Python installation is required for the Windows installer. If Windows SmartScreen appears,
-          choose "More info" then "Run anyway" if you trust the downloaded file.
-        </div>
+      <div class="hero-card">
+        <div class="eyebrow">Peptide modeling and design</div>
+        <h1>Descriptor-driven peptide activity prediction.</h1>
+        <p class="lead">A peptide-specific QSAR platform for sequence validation, peptide descriptor calculation, regression and classification modeling, activity ranking, 3D peptide inspection, and interpretable design guidance.</p>
       </div>
-      <div class="panel molecule" aria-hidden="true">
-        <div class="chain">
-          <span>A</span><span>K</span><span>L</span><span>V</span><span>F</span>
-        </div>
+      <div class="molecule hero-card" aria-label="Peptide structure illustration">
+        <div class="helix"></div>
+        <span class="node"></span><span class="node"></span><span class="node"></span>
       </div>
     </section>
-    <footer>
-      Developed by Ahmed G. Soliman. Local QSAR app, runs in the browser at localhost after installation.
-    </footer>
+
+    <section class="grid">
+      <article class="feature"><h3>Peptide descriptors</h3><p>Calculates sequence length, molecular weight, net charge, isoelectric point, GRAVY, Boman index, amino acid composition, residue class frequencies, motif fingerprints, and optional approximate 3D conformer descriptors.</p></article>
+      <article class="feature"><h3>QSAR modeling</h3><p>Supports regression and classification workflows for activity, IC50, MIC, docking score, toxicity, solubility, binding score, and other peptide-relevant endpoints.</p></article>
+      <article class="feature"><h3>Design guidance</h3><p>Ranks candidate peptides, summarizes good-structure criteria, compares descriptors, and highlights model-driven residue or feature patterns that may improve predicted activity.</p></article>
+    </section>
+
+    <section class="panel">
+      <h2>Scientific Basis</h2>
+      <p>The tool links peptide sequence chemistry with machine learning by converting peptide sequences into biologically meaningful numerical descriptors. These descriptors represent charge distribution, hydrophobicity, aromaticity, residue composition, structural tendency, and approximate 3D shape. QSAR models then learn statistical relationships between those descriptors and measured or computed biological endpoints.</p>
+      <div class="chips">
+        <span class="chip">Amino acid composition</span>
+        <span class="chip">Physicochemical indices</span>
+        <span class="chip">Docking-score targets</span>
+        <span class="chip">3D conformer inspection</span>
+        <span class="chip">Model explainability</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Developer</h2>
+      <p><strong>Ahmed G. Soliman</strong> developed this peptide QSAR platform for peptide informatics, activity prediction, interpretable modeling, and scientific reporting workflows.</p>
+      <p>MEXT master's student at Kyutech, Japan, School of Life Science and Engineering. Biotechnology graduate from Faculty of Agriculture, Ain Shams University, Cairo, Egypt. Former instructor in in-silico drug design and immune-informatics at ACGEB.</p>
+      <p>Research identifiers: Scopus ID 58569160700, ResearcherID ABE-8406-2021, ORCID 0000-0002-1122-3993.</p>
+      <a class="button" href="https://sites.google.com/view/ahmed-g-soliman/home">Developer Portfolio</a>
+    </section>
   </main>
+  <footer>Developed by Ahmed G. Soliman. This public page describes the peptide QSAR platform, its scientific basis, and its research-focused capabilities.</footer>
 </body>
 </html>
