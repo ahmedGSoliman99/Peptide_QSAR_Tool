@@ -629,6 +629,14 @@ def _render_train_tab() -> None:
         val_size = col8.slider("Validation size", min_value=0.0, max_value=0.30, value=0.10, step=0.05)
         cv_folds = col9.slider("CV folds", min_value=2, max_value=10, value=5, step=1)
         random_state = col10.number_input("Random seed", min_value=1, max_value=99999, value=42, step=1)
+        auto_stabilize = st.checkbox(
+            "Auto-stabilize small or high-dimensional QSAR datasets",
+            value=True,
+            help=(
+                "Recommended for peptide QSAR. If descriptors greatly outnumber samples, "
+                "the app tightens correlation filtering and uses a compact PCA space to reduce overfitting."
+            ),
+        )
 
     if st.button("Train & Compare Models", type="primary"):
         if not selected_models:
@@ -636,13 +644,32 @@ def _render_train_tab() -> None:
             return
         try:
             with st.spinner("Training models and running evaluation..."):
+                descriptor_count = len(st.session_state.get("descriptor_columns", []))
+                valid_target_rows = int(descriptor_df[target_col].notna().sum())
+                effective_use_pca = bool(use_pca)
+                effective_pca_components = int(pca_components)
+                effective_correlation_threshold = float(correlation_threshold)
+                auto_note = ""
+                if (
+                    auto_stabilize
+                    and task_type == "regression"
+                    and valid_target_rows > 0
+                    and descriptor_count > max(30, valid_target_rows * 2)
+                ):
+                    effective_use_pca = True
+                    effective_pca_components = max(2, min(25, descriptor_count, max(2, valid_target_rows // 4)))
+                    effective_correlation_threshold = min(effective_correlation_threshold, 0.90)
+                    auto_note = (
+                        f"Auto-stabilizer enabled: {descriptor_count} descriptors for {valid_target_rows} rows. "
+                        f"Using PCA={effective_pca_components} and correlation threshold={effective_correlation_threshold:.2f}."
+                    )
                 preprocessing_config = PreprocessingConfig(
                     impute_strategy=impute_strategy,
                     scaler=scaler,
                     variance_threshold=float(variance_threshold),
-                    correlation_threshold=float(correlation_threshold),
-                    use_pca=bool(use_pca),
-                    pca_components=int(pca_components),
+                    correlation_threshold=effective_correlation_threshold,
+                    use_pca=effective_use_pca,
+                    pca_components=effective_pca_components,
                 )
                 split_config = SplitConfig(
                     test_size=float(test_size),
@@ -659,6 +686,8 @@ def _render_train_tab() -> None:
                     split_config=split_config,
                     cv_folds=int(cv_folds),
                 )
+                if auto_note:
+                    training_result["auto_stabilizer_note"] = auto_note
             st.session_state["training_result"] = training_result
             st.session_state["active_model_name"] = training_result["best_model_name"]
             st.success(f"Training completed. Best model: {training_result['best_model_name']}")
@@ -668,6 +697,8 @@ def _render_train_tab() -> None:
     result = st.session_state["training_result"]
     if isinstance(result, dict):
         comparison_df = result["comparison_table"]
+        if result.get("auto_stabilizer_note"):
+            st.info(result["auto_stabilizer_note"])
         st.dataframe(comparison_df, use_container_width=True)
 
         metric_col = (
@@ -684,12 +715,23 @@ def _render_train_tab() -> None:
             )
         if result["task_type"] == "regression" and "R2" in comparison_df.columns:
             best_r2 = pd.to_numeric(comparison_df["R2"], errors="coerce").max()
+            best_cv_r2 = (
+                pd.to_numeric(comparison_df["CV_r2_mean"], errors="coerce").max()
+                if "CV_r2_mean" in comparison_df.columns
+                else np.nan
+            )
             if pd.notna(best_r2) and best_r2 < 0:
-                st.warning(
-                    "All compared models have negative R2 on the test split. This usually means the dataset is too small, "
-                    "too noisy, or the split is not representative. Try adding more peptides, disabling high-dimensional "
-                    "dipeptide features, using correlation filtering/PCA, or changing the random seed."
-                )
+                if pd.notna(best_cv_r2) and best_cv_r2 >= 0:
+                    st.info(
+                        "The single holdout test split has negative R2, but repeated cross-validation is non-negative. "
+                        "For small peptide QSAR datasets, use CV_R2_mean, RMSE, MAE, and external validation as the main reliability checks."
+                    )
+                else:
+                    st.warning(
+                        "Both the holdout test split and cross-validation have weak or negative R2. "
+                        "This usually means the current dataset is too small, noisy, or descriptor-heavy for reliable regression. "
+                        "Add more measured peptides, reduce descriptors, use PCA/correlation filtering, or validate with an external test set."
+                    )
             elif pd.to_numeric(comparison_df["R2"], errors="coerce").lt(0).any():
                 st.info(
                     "Some models have negative R2, but the leaderboard picked a better model above them. "
@@ -731,11 +773,18 @@ def _render_evaluate_tab() -> None:
         metric_cols[1].metric("RMSE", f"{metrics['RMSE']:.4f}")
         metric_cols[2].metric("MAE", f"{metrics['MAE']:.4f}")
         if metrics.get("R2", 0) < 0:
-            st.warning(
-                "R2 is negative, which means this model is performing worse than simply predicting "
-                "the average target value on the test set. Try more training data, fewer descriptors, "
-                "PCA/correlation filtering, or a nonlinear model such as SVR, kNN, Random Forest, or Extra Trees."
-            )
+            cv_r2 = bundle.cv_summary.get("CV_r2_mean", np.nan)
+            if pd.notna(cv_r2) and cv_r2 >= 0:
+                st.info(
+                    "The holdout R2 is negative for this particular split, but repeated cross-validation is non-negative. "
+                    "Use CV_R2_mean together with RMSE/MAE and external validation for the scientific conclusion."
+                )
+            else:
+                st.warning(
+                    "R2 is negative, which means this model is performing worse than simply predicting "
+                    "the average target value on the test set. Try more training data, fewer descriptors, "
+                    "PCA/correlation filtering, or a nonlinear model such as SVR, kNN, Random Forest, or Extra Trees."
+                )
     else:
         metric_cols[0].metric("Accuracy", f"{metrics['Accuracy']:.4f}")
         metric_cols[1].metric("Precision", f"{metrics['Precision']:.4f}")

@@ -140,6 +140,25 @@ class FeaturePreprocessor:
         return [column for column in upper.columns if any(upper[column] > threshold)]
 
 
+def _regression_stratify_bins(y: pd.Series, max_bins: int = 5) -> pd.Series | None:
+    """Create target-quantile bins so regression splits keep activity ranges balanced."""
+    y_num = pd.to_numeric(y, errors="coerce")
+    if y_num.notna().sum() < 12 or y_num.nunique(dropna=True) < 4:
+        return None
+
+    n_bins = min(max_bins, max(2, int(np.sqrt(y_num.notna().sum()))))
+    try:
+        bins = pd.qcut(y_num, q=n_bins, labels=False, duplicates="drop")
+    except Exception:
+        return None
+
+    bins = pd.Series(bins, index=y.index)
+    counts = bins.value_counts(dropna=True)
+    if counts.empty or len(counts) < 2 or counts.min() < 2:
+        return None
+    return bins.astype("Int64")
+
+
 def split_dataset(
     X: pd.DataFrame,
     y: pd.Series,
@@ -149,7 +168,7 @@ def split_dataset(
     config = config or SplitConfig()
     task_type = task_type.lower().strip()
     is_classification = "classification" in task_type
-    stratify_values = y if is_classification else None
+    stratify_values = y if is_classification else _regression_stratify_bins(y)
 
     X_train_val, X_test, y_train_val, y_test = train_test_split(
         X,
@@ -162,7 +181,7 @@ def split_dataset(
     if config.val_size > 0:
         relative_val = config.val_size / (1.0 - config.test_size)
         relative_val = min(max(relative_val, 0.05), 0.5)
-        stratify_train_val = y_train_val if is_classification else None
+        stratify_train_val = y_train_val if is_classification else _regression_stratify_bins(y_train_val)
         X_train, X_val, y_train, y_val = train_test_split(
             X_train_val,
             y_train_val,
