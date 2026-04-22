@@ -12,6 +12,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
+from sklearn.compose import TransformedTargetRegressor
 from sklearn.ensemble import (
     ExtraTreesClassifier,
     ExtraTreesRegressor,
@@ -27,7 +28,7 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.svm import SVC, SVR
 
 from .descriptor_engine import DescriptorConfig, calculate_descriptors_dataframe, get_descriptor_columns
@@ -389,7 +390,25 @@ def _make_estimator_pipeline(estimator: Any, task_type: str, n_features: int, n_
     )
 
 
+def _wrap_regression_target(estimator: Any, task_type: str) -> Any:
+    """Standardize regression targets during fitting, then inverse-transform predictions."""
+    if _is_classification(task_type):
+        return estimator
+    return TransformedTargetRegressor(regressor=estimator, transformer=StandardScaler())
+
+
+def _core_estimator(estimator: Any) -> Any:
+    """Unwrap target and feature-selection pipelines to reach the scientific model object."""
+    if isinstance(estimator, TransformedTargetRegressor):
+        estimator = getattr(estimator, "regressor_", estimator.regressor)
+    if hasattr(estimator, "named_steps"):
+        estimator = estimator.named_steps.get("model", estimator)
+    return estimator
+
+
 def _selected_feature_names(estimator: Any, feature_names: list[str]) -> list[str]:
+    if isinstance(estimator, TransformedTargetRegressor):
+        estimator = getattr(estimator, "regressor_", estimator.regressor)
     if hasattr(estimator, "named_steps") and "selector" in estimator.named_steps:
         try:
             mask = estimator.named_steps["selector"].get_support()
@@ -464,11 +483,14 @@ def train_and_compare_models(
     model_outputs: dict[str, Any] = {}
 
     for model_name in chosen:
-        estimator = _make_estimator_pipeline(
-            clone(catalog[model_name]),
+        estimator = _wrap_regression_target(
+            _make_estimator_pipeline(
+                clone(catalog[model_name]),
+                task,
+                n_features=X_train.shape[1],
+                n_samples=len(split["y_train"]),
+            ),
             task,
-            n_features=X_train.shape[1],
-            n_samples=len(split["y_train"]),
         )
         estimator.fit(X_train, split["y_train"])
 
@@ -535,11 +557,14 @@ def train_and_compare_models(
         final_preprocessor = FeaturePreprocessor(preprocessing_config)
         final_preprocessor.fit(X)
         X_full = final_preprocessor.transform_dataframe(X)
-        final_estimator = _make_estimator_pipeline(
-            clone(catalog[model_name]),
+        final_estimator = _wrap_regression_target(
+            _make_estimator_pipeline(
+                clone(catalog[model_name]),
+                task,
+                n_features=X_full.shape[1],
+                n_samples=len(y),
+            ),
             task,
-            n_features=X_full.shape[1],
-            n_samples=len(y),
         )
         final_estimator.fit(X_full, y)
         final_feature_names = _selected_feature_names(final_estimator, final_preprocessor.output_feature_names.copy())
@@ -589,7 +614,7 @@ def train_and_compare_models(
 
 def summarize_model_bundle(bundle: ModelBundle) -> dict[str, Any]:
     estimator = bundle.estimator
-    core_estimator = estimator.named_steps.get("model", estimator) if hasattr(estimator, "named_steps") else estimator
+    core_estimator = _core_estimator(estimator)
     model_params = core_estimator.get_params(deep=False) if hasattr(core_estimator, "get_params") else {}
     compact_params = {}
     for key in sorted(model_params.keys()):
@@ -605,6 +630,9 @@ def summarize_model_bundle(bundle: ModelBundle) -> dict[str, Any]:
         "TransformedFeatureCount": len(bundle.feature_names_transformed),
         "CreatedAt": bundle.created_at,
         "EstimatorClass": core_estimator.__class__.__name__,
+        "TargetTransform": "StandardScaler via TransformedTargetRegressor"
+        if not _is_classification(bundle.task_type)
+        else "None",
         "EstimatorParams": compact_params,
     }
 
@@ -690,9 +718,7 @@ def predict_with_bundle(bundle: ModelBundle, sequences_df: pd.DataFrame) -> tupl
 
 def compute_model_feature_importance(bundle: ModelBundle) -> pd.DataFrame:
     """Return model-native feature importance if the estimator exposes it."""
-    estimator = bundle.estimator
-    if hasattr(estimator, "named_steps"):
-        estimator = estimator.named_steps.get("model", estimator)
+    estimator = _core_estimator(bundle.estimator)
     features = bundle.feature_names_transformed
 
     values: np.ndarray | None = None

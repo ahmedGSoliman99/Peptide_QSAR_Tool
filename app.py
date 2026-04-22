@@ -892,6 +892,7 @@ def _render_evaluate_tab() -> None:
             {"Item": "Transformed Features", "Value": summary.get("TransformedFeatureCount", "Unknown")},
             {"Item": "Created At", "Value": summary.get("CreatedAt", "Unknown")},
             {"Item": "Estimator Class", "Value": summary.get("EstimatorClass", "Unknown")},
+            {"Item": "Target Transform", "Value": summary.get("TargetTransform", "Unknown")},
         ]
     )
     st.dataframe(summary_table, use_container_width=True, hide_index=True)
