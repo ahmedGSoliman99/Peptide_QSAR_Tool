@@ -232,6 +232,8 @@ def _nonnegative_model_display_table(comparison_df: pd.DataFrame, task_type: str
     for col in ["Model", "ModelFamily"]:
         if col in comparison_df.columns:
             out[col] = comparison_df[col]
+    if "SelectedFeatures" in comparison_df.columns:
+        out["SelectedFeatures"] = pd.to_numeric(comparison_df["SelectedFeatures"], errors="coerce")
     if "FitQuality_0_100" in comparison_df.columns:
         out["ModelQuality_0_100"] = pd.to_numeric(comparison_df["FitQuality_0_100"], errors="coerce").clip(lower=0, upper=100)
     if "CV_r2_mean" in comparison_df.columns:

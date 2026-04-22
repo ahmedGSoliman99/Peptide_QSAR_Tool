@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+import warnings
 
 import joblib
 import numpy as np
@@ -19,11 +20,13 @@ from sklearn.ensemble import (
     RandomForestClassifier,
     RandomForestRegressor,
 )
+from sklearn.feature_selection import SelectPercentile, f_classif, f_regression
 from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge
 from sklearn.model_selection import KFold, RepeatedKFold, StratifiedKFold, cross_validate
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.neural_network import MLPClassifier, MLPRegressor
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder
 from sklearn.svm import SVC, SVR
 
@@ -355,6 +358,47 @@ def _normalized_score(values: Any, higher_is_better: bool = True) -> pd.Series:
     return out.clip(lower=0.0, upper=100.0)
 
 
+def _feature_selection_percentile(n_features: int, n_samples: int) -> int:
+    """Keep fewer supervised features when descriptors greatly outnumber peptides."""
+    if n_features <= 0:
+        return 100
+    if n_features <= max(40, n_samples * 2):
+        return 100
+    target_features = max(10, min(80, n_samples * 2))
+    return int(max(10, min(100, round(100 * target_features / n_features))))
+
+
+def _safe_f_regression(X: Any, y: Any) -> tuple[np.ndarray, np.ndarray]:
+    """Numerically stable f_regression wrapper for descriptor matrices with near-constant columns."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        scores, p_values = f_regression(X, y)
+    scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
+    p_values = np.nan_to_num(p_values, nan=1.0, posinf=1.0, neginf=1.0)
+    return scores, p_values
+
+
+def _make_estimator_pipeline(estimator: Any, task_type: str, n_features: int, n_samples: int) -> Pipeline:
+    score_func = f_classif if _is_classification(task_type) else _safe_f_regression
+    percentile = _feature_selection_percentile(n_features, n_samples)
+    return Pipeline(
+        [
+            ("selector", SelectPercentile(score_func=score_func, percentile=percentile)),
+            ("model", estimator),
+        ]
+    )
+
+
+def _selected_feature_names(estimator: Any, feature_names: list[str]) -> list[str]:
+    if hasattr(estimator, "named_steps") and "selector" in estimator.named_steps:
+        try:
+            mask = estimator.named_steps["selector"].get_support()
+            return [name for name, keep in zip(feature_names, mask) if keep]
+        except Exception:
+            return feature_names
+    return feature_names
+
+
 def train_and_compare_models(
     descriptor_df: pd.DataFrame,
     target_column: str,
@@ -420,7 +464,12 @@ def train_and_compare_models(
     model_outputs: dict[str, Any] = {}
 
     for model_name in chosen:
-        estimator = clone(catalog[model_name])
+        estimator = _make_estimator_pipeline(
+            clone(catalog[model_name]),
+            task,
+            n_features=X_train.shape[1],
+            n_samples=len(split["y_train"]),
+        )
         estimator.fit(X_train, split["y_train"])
 
         y_pred_test = estimator.predict(X_test)
@@ -461,6 +510,7 @@ def train_and_compare_models(
 
         cv_summary = _run_cv(estimator, X_train, split["y_train"], task, cv_folds=cv_folds)
         record.update(cv_summary)
+        record["SelectedFeatures"] = len(_selected_feature_names(estimator, preprocessor.output_feature_names))
         if _is_classification(task):
             primary_score = float(record.get("CV_f1_weighted_mean", metrics["F1"]))
         else:
@@ -485,8 +535,14 @@ def train_and_compare_models(
         final_preprocessor = FeaturePreprocessor(preprocessing_config)
         final_preprocessor.fit(X)
         X_full = final_preprocessor.transform_dataframe(X)
-        final_estimator = clone(catalog[model_name])
+        final_estimator = _make_estimator_pipeline(
+            clone(catalog[model_name]),
+            task,
+            n_features=X_full.shape[1],
+            n_samples=len(y),
+        )
         final_estimator.fit(X_full, y)
+        final_feature_names = _selected_feature_names(final_estimator, final_preprocessor.output_feature_names.copy())
 
         bundle = ModelBundle(
             task_type=task,
@@ -496,7 +552,7 @@ def train_and_compare_models(
             descriptor_config=descriptor_config,
             descriptor_columns=descriptor_columns,
             target_column=target_column,
-            feature_names_transformed=final_preprocessor.output_feature_names.copy(),
+            feature_names_transformed=final_feature_names,
             label_encoder=label_encoder,
             metrics=metrics,
             cv_summary=cv_summary,
@@ -533,7 +589,8 @@ def train_and_compare_models(
 
 def summarize_model_bundle(bundle: ModelBundle) -> dict[str, Any]:
     estimator = bundle.estimator
-    model_params = estimator.get_params(deep=False) if hasattr(estimator, "get_params") else {}
+    core_estimator = estimator.named_steps.get("model", estimator) if hasattr(estimator, "named_steps") else estimator
+    model_params = core_estimator.get_params(deep=False) if hasattr(core_estimator, "get_params") else {}
     compact_params = {}
     for key in sorted(model_params.keys()):
         value = model_params[key]
@@ -547,7 +604,7 @@ def summarize_model_bundle(bundle: ModelBundle) -> dict[str, Any]:
         "DescriptorCount": len(bundle.descriptor_columns),
         "TransformedFeatureCount": len(bundle.feature_names_transformed),
         "CreatedAt": bundle.created_at,
-        "EstimatorClass": estimator.__class__.__name__,
+        "EstimatorClass": core_estimator.__class__.__name__,
         "EstimatorParams": compact_params,
     }
 
@@ -634,6 +691,8 @@ def predict_with_bundle(bundle: ModelBundle, sequences_df: pd.DataFrame) -> tupl
 def compute_model_feature_importance(bundle: ModelBundle) -> pd.DataFrame:
     """Return model-native feature importance if the estimator exposes it."""
     estimator = bundle.estimator
+    if hasattr(estimator, "named_steps"):
+        estimator = estimator.named_steps.get("model", estimator)
     features = bundle.feature_names_transformed
 
     values: np.ndarray | None = None
