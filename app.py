@@ -221,6 +221,44 @@ def _plot(fig, key: str) -> None:
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 
+def _nonnegative_model_display_table(comparison_df: pd.DataFrame, task_type: str) -> pd.DataFrame:
+    """Return a user-facing leaderboard without raw negative diagnostic scores."""
+    if not isinstance(comparison_df, pd.DataFrame) or comparison_df.empty:
+        return pd.DataFrame()
+    if task_type != "regression":
+        return comparison_df.copy()
+
+    out = pd.DataFrame(index=comparison_df.index)
+    for col in ["Model", "ModelFamily"]:
+        if col in comparison_df.columns:
+            out[col] = comparison_df[col]
+    if "FitQuality_0_100" in comparison_df.columns:
+        out["ModelQuality_0_100"] = pd.to_numeric(comparison_df["FitQuality_0_100"], errors="coerce").clip(lower=0, upper=100)
+    if "CV_r2_mean" in comparison_df.columns:
+        out["CVQuality_0_100"] = (pd.to_numeric(comparison_df["CV_r2_mean"], errors="coerce") * 100).clip(lower=0, upper=100)
+    if "R2" in comparison_df.columns:
+        out["HoldoutQuality_0_100"] = (pd.to_numeric(comparison_df["R2"], errors="coerce") * 100).clip(lower=0, upper=100)
+    rename_map = {
+        "RMSE": "Holdout_RMSE",
+        "MAE": "Holdout_MAE",
+        "CV_root_mean_squared_error_mean": "CV_RMSE",
+        "CV_mean_absolute_error_mean": "CV_MAE",
+    }
+    for src, dst in rename_map.items():
+        if src in comparison_df.columns:
+            out[dst] = pd.to_numeric(comparison_df[src], errors="coerce")
+    return out.reset_index(drop=True)
+
+
+def _prediction_display_table(prediction_df: pd.DataFrame) -> pd.DataFrame:
+    """Hide raw lower-is-better model outputs from the beginner-facing prediction table."""
+    if not isinstance(prediction_df, pd.DataFrame) or prediction_df.empty:
+        return pd.DataFrame()
+    hidden = {"RawModelPrediction", "OptimizationDirection"}
+    cols = [c for c in prediction_df.columns if c not in hidden]
+    return prediction_df[cols].copy()
+
+
 def _plot_peptide_3d(sequence: str):
     mol3d, status = generate_peptide_3d_mol(sequence)
     if mol3d is None:
@@ -699,7 +737,13 @@ def _render_train_tab() -> None:
         comparison_df = result["comparison_table"]
         if result.get("auto_stabilizer_note"):
             st.info(result["auto_stabilizer_note"])
-        st.dataframe(comparison_df, use_container_width=True)
+        display_comparison_df = _nonnegative_model_display_table(comparison_df, result["task_type"])
+        st.dataframe(display_comparison_df, use_container_width=True)
+        if result["task_type"] == "regression":
+            with st.expander("Scientific diagnostics: raw R2 values"):
+                st.caption("Raw R2 can be negative. A negative R2 means the split/model is weaker than predicting the training mean; it is kept here only for scientific diagnosis.")
+                raw_cols = [c for c in ["Model", "ModelFamily", "R2", "CV_r2_mean", "CV_r2_std", "PrimaryScore", "RMSE", "MAE"] if c in comparison_df.columns]
+                st.dataframe(comparison_df[raw_cols], use_container_width=True)
 
         metric_col = (
             "FitQuality_0_100"
@@ -769,19 +813,34 @@ def _render_evaluate_tab() -> None:
     st.markdown("#### Test Set Metrics")
     metric_cols = st.columns(5)
     if task_type == "regression":
-        metric_cols[0].metric("R2", f"{metrics['R2']:.4f}")
-        metric_cols[1].metric("RMSE", f"{metrics['RMSE']:.4f}")
-        metric_cols[2].metric("MAE", f"{metrics['MAE']:.4f}")
+        raw_r2 = float(metrics.get("R2", np.nan))
+        cv_r2 = float(bundle.cv_summary.get("CV_r2_mean", np.nan)) if pd.notna(bundle.cv_summary.get("CV_r2_mean", np.nan)) else np.nan
+        metric_cols[0].metric("Holdout Quality", f"{max(0.0, raw_r2 * 100):.2f}/100" if pd.notna(raw_r2) else "N/A")
+        metric_cols[1].metric("CV Quality", f"{max(0.0, cv_r2 * 100):.2f}/100" if pd.notna(cv_r2) else "N/A")
+        metric_cols[2].metric("RMSE", f"{metrics['RMSE']:.4f}")
+        metric_cols[3].metric("MAE", f"{metrics['MAE']:.4f}")
+        with st.expander("Scientific diagnostics: raw regression metrics"):
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {"Metric": "Raw holdout R2", "Value": raw_r2},
+                        {"Metric": "Raw CV_R2_mean", "Value": cv_r2},
+                        {"Metric": "RMSE", "Value": metrics.get("RMSE", np.nan)},
+                        {"Metric": "MAE", "Value": metrics.get("MAE", np.nan)},
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
         if metrics.get("R2", 0) < 0:
-            cv_r2 = bundle.cv_summary.get("CV_r2_mean", np.nan)
             if pd.notna(cv_r2) and cv_r2 >= 0:
                 st.info(
-                    "The holdout R2 is negative for this particular split, but repeated cross-validation is non-negative. "
+                    "The holdout quality is clipped to zero in the main dashboard because raw holdout R2 is negative for this split. "
                     "Use CV_R2_mean together with RMSE/MAE and external validation for the scientific conclusion."
                 )
             else:
                 st.warning(
-                    "R2 is negative, which means this model is performing worse than simply predicting "
+                    "The raw diagnostic R2 is negative, which means this model is performing worse than simply predicting "
                     "the average target value on the test set. Try more training data, fewer descriptors, "
                     "PCA/correlation filtering, or a nonlinear model such as SVR, kNN, Random Forest, or Extra Trees."
                 )
@@ -997,9 +1056,15 @@ def _render_predict_tab() -> None:
             if direction == "minimize":
                 st.info(
                     "This model target is interpreted as lower-is-better (for example IC50/MIC/DockingScore). "
-                    "`Prediction` is shown as a positive optimized design score, while the original model output is kept in `RawModelPrediction`."
+                    "`Prediction` is shown as a positive optimized design score. Raw lower-is-better model values are hidden in diagnostics."
                 )
-        st.dataframe(prediction_df, use_container_width=True, height=300)
+        prediction_display_df = _prediction_display_table(prediction_df)
+        st.dataframe(prediction_display_df, use_container_width=True, height=300)
+        if "RawModelPrediction" in prediction_df.columns:
+            with st.expander("Scientific diagnostics: raw model predictions"):
+                st.caption("RawModelPrediction can be negative for docking or binding-energy targets. The main table uses the positive optimized score.")
+                raw_cols = [c for c in ["Rank", "Name", "Sequence", "RawModelPrediction", "Prediction", "RankingScore", "NormalizedScore_0_100"] if c in prediction_df.columns]
+                st.dataframe(prediction_df[raw_cols], use_container_width=True, height=240)
         _plot(
             plot_prediction_ranking(prediction_df, top_n=min(30, len(prediction_df))),
             key="predict_ranking_plot",
@@ -1054,10 +1119,10 @@ def _render_predict_tab() -> None:
                     criteria_cols = [c for c in criteria_cols if c in quality_source.columns]
                 st.dataframe(quality_source[criteria_cols], use_container_width=True, height=280)
 
-        pred_csv = dataframe_to_csv_bytes(prediction_df)
+        pred_csv = dataframe_to_csv_bytes(prediction_display_df)
         pred_xlsx = dataframe_to_excel_bytes(
             {
-                "Predictions": prediction_df,
+                "Predictions": prediction_display_df,
                 "PredictionDescriptors": st.session_state["prediction_descriptors_df"]
                 if isinstance(st.session_state["prediction_descriptors_df"], pd.DataFrame)
                 else pd.DataFrame(),
@@ -1078,6 +1143,15 @@ def _render_predict_tab() -> None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
+        if "RawModelPrediction" in prediction_df.columns:
+            with st.expander("Download full scientific prediction table"):
+                st.download_button(
+                    "Download Full Predictions With Raw Diagnostics (CSV)",
+                    data=dataframe_to_csv_bytes(prediction_df),
+                    file_name="peptide_predictions_with_raw_diagnostics.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
 
 
 def _render_visualization_tab() -> None:
