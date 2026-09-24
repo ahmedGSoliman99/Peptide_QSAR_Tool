@@ -1,0 +1,14 @@
+name: maws-restored
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - ambertools
+  - openmm
+  - numpy
+  - scipy
+  - matplotlib
+  - mpmath
+  - numba
+  - scikit-learn
+  - lxml
