@@ -1,0 +1,20 @@
+MAWS - Making Aptamers With Software
+Active version: 2.0 (released:_2017)
+Computational method: Kullback-Leibler
+Job: LEAK_test_DNA
+Input file: LEAK.pdb
+Sample number in initial step: 5000
+Sample number per further steps: 5000
+Number of further steps: 25 (sequence length = )
+Value of beta: 0.01
+Start time: 2025-10-27 04:17:56.084033
+Initialized succesfully!
+2025-10-27 04:17:57.357885: starting initial step for 'DGN'
+2025-10-27 04:18:55.453293: starting initial step for 'DAN'
+2025-10-27 04:19:51.198977: starting initial step for 'DTN'
+2025-10-27 04:20:46.775966: starting initial step for 'DCN'
+2025-10-27 04:21:39.802654: Completed first step. Selected nucleotide: DCN
+2025-10-27 04:21:39.802673: Starting further steps to append 25 nucleotides
+2025-10-27 07:25:12.568382: Run completed. Thank you for using MAWS!
+
+Final sequence: DCN DTN DTN DCN DTN DGN DGN DTN DTN DCN DTN DTN DGN DCN DTN DTN DGN DTN DCN DTN DGN DCN DCN DTN DCN DCN
