@@ -1,0 +1,137 @@
+diff --git a/Complex.py b/Complex.py
+index 1984e89..47aa2ca 100644
+--- a/Complex.py
++++ b/Complex.py
+@@ -232,13 +232,49 @@ class Complex(object):
+     def build(self, file_name, target_path=""):
+         build_string = self.build_string 
+         if self.chains:
++            # Check if any chain needs RNA force field
++            needs_rna = any(hasattr(chain.structure, 'is_rna') and chain.structure.is_rna for chain in self.chains)
++            if needs_rna:
++                self.build_string += """
++                            source leaprc.RNA.OL3
++                            """
++            
++            # Check if any chain needs DNA force field
++            needs_dna = any(hasattr(chain.structure, 'is_dna') and chain.structure.is_dna for chain in self.chains)
++            if needs_dna:
++                self.build_string += """
++                            source leaprc.DNA.OL15
++                            """
++            
+             for chain in self.chains:
+                 self.build_string += chain.structure.init_string
++
++
+             for index, chain in enumerate(self.chains):
+-                if chain.sequence:
+-                    self.build_string +="""
+-                                        CHAIN%s = sequence {%s}
+-                                        """%(index, chain.sequence)
++                seq = chain.sequence  # space-separated sequence, e.g. "C5 G G3"
++                
++                # Skip empty chains (not yet initialized)
++                if not seq or not chain.sequence_array:
++                    continue
++                
++                # Check if this is a single library unit (like a protein from PDB)
++                # vs a sequence of residues (like DNA/RNA aptamer)
++                if len(chain.sequence_array) == 1 and chain.sequence in chain.structure.residue_names:
++                    # This is a library unit (e.g., protein), load it directly without 'sequence' command
++                    self.build_string += f"""
++                                    CHAIN{index} = {seq}
++                                    """
++                else:
++                    # This is a sequence of residues (DNA/RNA aptamer)
++                    # Note: RNA residues in AMBER are named C5, G, U3, etc. (not RC5, RG, RU3)
++                    # The leaprc.RNA.OL3 file defines these residues and their aliases
++                    # No prefix mapping needed - use residue names as-is
++                    self.build_string += f"""
++                                    CHAIN{index} = sequence {{{seq}}}
++                                    """
++
++
++
+                 #NOCHMAL ANSEHEN
+                 #else:
+                 #    raise ValueError("Empty Chain Index: %s"%index)
+@@ -254,6 +290,10 @@ class Complex(object):
+             self.build_string = build_string
+             #os.remove("%s%s.in"%(target_path, file_name))
+             result = subprocess.call("tleap -f %s%s.in"%(target_path,file_name),shell=True)
++            
++            # Check if tleap succeeded
++            if result != 0:
++                raise RuntimeError(f"tleap failed with exit code {result}. Check {file_name}.in and leap.log for details.")
+ 
+             #modified by NU iGEM Kazakhstan
+             self.prmtop = app.AmberPrmtopFile(file_name+".prmtop")
+@@ -270,7 +310,7 @@ class Complex(object):
+                                                    constraints=None, implicitSolvent=app.OBC1)
+ 
+             #set platform (by NU iGEM)
+-            self.platform = mm.Platform.getPlatformByName('CPU')
++            self.platform = mm.Platform.getPlatformByName('CUDA')
+             
+             #create simulation
+             self.simulation = app.Simulation(self.topology, self.system, self.integrator, self.platform)
+@@ -388,7 +428,12 @@ class Complex(object):
+ 
+             else:
+                 pass
+-            
++        
++        # FIX: Recreate simulation context after topology/position changes
++        # This ensures OpenMM context knows about the new topology
++        self.integrator = mm.LangevinIntegrator(300.*unit.kelvin, 1./unit.picosecond, 0.00005*unit.picoseconds)
++        self.simulation = app.Simulation(self.topology, self.system, self.integrator, self.platform)
++
+     def rotate_element(self, element, angle, reverse=False):
+         revised_element = element[:]
+         if self.positions:
+@@ -581,6 +626,13 @@ class Complex(object):
+ 
+     #get current complex energy
+     def get_energy(self):
++        # FIX: Check if topology and positions match before setPositions
++        expected_atoms = len(list(self.topology.atoms()))
++        if len(self.positions) != expected_atoms:
++            # Mismatch detected - recreate simulation context
++            self.integrator = mm.LangevinIntegrator(300.*unit.kelvin, 1./unit.picosecond, 0.00005*unit.picoseconds)
++            self.simulation = app.Simulation(self.topology, self.system, self.integrator, self.platform)
++     
+         self.simulation.context.setPositions(self.positions)
+         state = self.simulation.context.getState(getPositions=True,getEnergy=True,groups=1)
+         free_E = state.getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
+diff --git a/MAWS.py b/MAWS.py
+index 97a5ac1..90f4d32 100644
+--- a/MAWS.py
++++ b/MAWS.py
+@@ -100,6 +100,9 @@ output.write("Start time: {0}\n".format(str(datetime.now())))
+ if APTAMER_TYPE == 'RNA':
+     #Build Structure-object for RNA residues
+     RNA = XMLStructure("RNA.xml")
++    
++    # Set the is_rna flag so LEaP knows to use R-prefixed residue names
++    RNA.is_rna = True
+ 
+     #Instantiate the Complex for further computation
+     cpx = Complex("leaprc.ff14SB")
+@@ -112,12 +115,15 @@ if APTAMER_TYPE == 'RNA':
+ else:
+     #structure for DNA
+     DNA = XMLStructure("DNA.xml")
++    
++    # Set the is_dna flag so LEaP knows to load DNA force field
++    DNA.is_dna = True
+ 
+     #Instantiate the Complex for further computation
+     cpx = Complex("leaprc.ff14SB")
+ 
+     #chain
+-    cpx.add_chain("G C A T", DNA)
++    cpx.add_chain("", DNA)
+ 
+     nucleotides = ["DGN", "DAN", "DTN", "DCN"]
+ 
